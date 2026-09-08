@@ -1,4 +1,4 @@
-name: Input integrity source capsule
+name: Input integrity candidate check
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  capsule:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -18,27 +18,43 @@ jobs:
         with:
           node-version: "24"
       - uses: pnpm/action-setup@v6
-      - name: Add pinned parser and retain only dependency changes
+      - name: Apply reviewed wiring and verify the tested file identities
         run: |
-          pnpm install --frozen-lockfile --ignore-scripts
-          pnpm add --workspace-root --save-exact --ignore-scripts ignore@7.0.5
+          sed 's/^ diff --git /diff --git /' .oracle-input-integrity.patch > "$RUNNER_TEMP/wiring.patch"
+          git apply --check "$RUNNER_TEMP/wiring.patch"
+          git apply --index "$RUNNER_TEMP/wiring.patch"
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+              'package.json': '8a8c29342158ee81cb6f13a5d47f086852c78882',
+              'pnpm-lock.yaml': '38faa90a129337c5773acdb8d9c1004eb3918be9',
+              'CHANGELOG.md': '84fdb67515b0cc4dc8791669553d5cefef885178',
+              'docs/cli-reference.md': 'a69345fcd8a2fd6c8feeb2d1af6fa47b8f11fc01',
+              'skills/oracle/SKILL.md': 'bdef402b7fcd45ea0693af9a966080b017f6c6e9',
+              'src/oracle/files.ts': '484a5abfc5dbed6243269915a7815c01d701c733',
+              'src/oracle/fsAdapter.ts': '7752857254740801fe94407038f95d1dfc78cce4',
+              'src/oracle/types.ts': 'f64cb2466fcaccf0e8299c74425f3f2061614155',
+              'src/oracle/gitignore.ts': 'ae805ba40cc3e41093375a934d88f2969e3f1d1c',
+              'src/oracle/sourceText.ts': '085ab0247540a4dd4ea4181b27a893fc8a578276',
+              'tests/oracleFiles.gitignore.test.ts': '4e91b0de80ccbc7d9e5a2a235622a3287a54305a',
+              'tests/oracleFiles.utf8.test.ts': 'f535b0deb903770f118bc43815e1dfc5958d8a38',
+              'tests/v2/sourceIntegrity.test.ts': 'da8226b53be7cb4ff91be43ad57fa094786139e6',
+          }
+          for file, want in expected.items():
+              got = subprocess.check_output(['git', 'hash-object', file], text=True).strip()
+              if got != want:
+                  raise SystemExit(f'Tested source mismatch: {file}: {got} != {want}')
+          print('All 13 changed files match the locally tested source.')
+          PY
+          git rm .oracle-input-integrity.patch .github/workflows/input-integrity-capsule.yml
+          git diff --cached --check
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+      - name: Run input and admission regressions without a real provider
+        run: pnpm exec vitest run tests/oracleFiles.gitignore.test.ts tests/oracleFiles.utf8.test.ts tests/oracleFiles.hiddenPaths.test.ts tests/cli/runOracle/prompt-and-utils.test.ts tests/v2/broker.test.ts tests/v2/oracle-bundle.test.ts tests/v2/sourceIntegrity.test.ts
+      - name: Commit verified source and remove temporary bootstrap files
+        run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json pnpm-lock.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m 'build: pin ignore for Git-compatible source selection'
-            git push origin HEAD:refs/heads/codex/oracle-input-integrity-20260909
-          fi
-      - name: Prepare source and test dependencies without provider access
-        run: |
-          mkdir -p "$RUNNER_TEMP/oracle-capsule"
-          git archive HEAD | tar -x -C "$RUNNER_TEMP/oracle-capsule"
-          cp -a node_modules "$RUNNER_TEMP/oracle-capsule/node_modules"
-          cp "$(command -v node)" "$RUNNER_TEMP/oracle-capsule/node24"
-          tar -czf "$RUNNER_TEMP/oracle-capsule.tar.gz" -C "$RUNNER_TEMP/oracle-capsule" .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: oracle-input-integrity-capsule
-          path: ${{ runner.temp }}/oracle-capsule.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+          git commit -m 'fix: validate source selection and UTF-8 before consultation'
+          git push origin HEAD:refs/heads/codex/oracle-input-integrity-20260909
