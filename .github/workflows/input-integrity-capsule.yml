@@ -1,0 +1,36 @@
+name: Input integrity source capsule
+
+on:
+  push:
+    branches: [codex/oracle-input-integrity-20260909]
+    paths: [.github/workflows/input-integrity-capsule.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  capsule:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v6
+      - name: Prepare source and test dependencies without provider access
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/oracle-capsule"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/oracle-capsule"
+          cp -a node_modules "$RUNNER_TEMP/oracle-capsule/node_modules"
+          cp "$(command -v node)" "$RUNNER_TEMP/oracle-capsule/node24"
+          tar -czf "$RUNNER_TEMP/oracle-capsule.tar.gz" -C "$RUNNER_TEMP/oracle-capsule" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oracle-input-integrity-capsule
+          path: ${{ runner.temp }}/oracle-capsule.tar.gz
+          retention-days: 1
+          if-no-files-found: error
