@@ -131,6 +131,8 @@ export interface MinimalFsModule {
   stat(targetPath: string): Promise<FsStats>;
   readdir(targetPath: string): Promise<string[]>;
   readFile(targetPath: string, encoding: NodeJS.BufferEncoding): Promise<string>;
+  /** Native adapters provide bytes so source validation precedes UTF-8 decoding. */
+  readFileBytes?(targetPath: string): Promise<Uint8Array>;
 }
 
 export interface FileTokenEntry {
