@@ -7,7 +7,13 @@ import { readFiles } from "../src/oracle/files.js";
 
 const roots: string[] = [];
 const hasGit = spawnSync("git", ["--version"]).status === 0;
-const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull };
+function gitEnv(root: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: path.join(root, ".git-empty-config"),
+  };
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -16,6 +22,9 @@ afterEach(async () => {
 async function fixture(entries: Record<string, string>): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-ignore-rules-"));
   roots.push(root);
+  // Git for Windows cannot open Node's extended-length null-device path.
+  // Use a real, private fixture file for empty config and global excludes.
+  await fs.writeFile(path.join(root, ".git-empty-config"), "");
   for (const [name, content] of Object.entries({ "sentinel.ts": "keep\n", ...entries })) {
     await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
     await fs.writeFile(path.join(root, name), content);
@@ -154,7 +163,7 @@ describe("shared source selection: Git ignore semantics", () => {
       ...rules,
       ...Object.fromEntries(files.map((name) => [name, "synthetic\n"])),
     });
-    execFileSync("git", ["init", "--quiet", root], { env: gitEnv });
+    execFileSync("git", ["init", "--quiet", root], { env: gitEnv(root) });
     const candidates = ["sentinel.ts", ...files];
     const checked = spawnSync(
       "git",
@@ -162,13 +171,13 @@ describe("shared source selection: Git ignore semantics", () => {
         "-c",
         "core.ignoreCase=false",
         "-c",
-        `core.excludesFile=${os.devNull}`,
+        `core.excludesFile=${path.join(root, ".git-empty-config")}`,
         "check-ignore",
         "--no-index",
         "--stdin",
         "-z",
       ],
-      { cwd: root, env: gitEnv, input: candidates.join("\0") + "\0", encoding: "utf8" },
+      { cwd: root, env: gitEnv(root), input: candidates.join("\0") + "\0", encoding: "utf8" },
     );
     expect([0, 1]).toContain(checked.status);
     const ignored = new Set(checked.stdout.split("\0").filter(Boolean));

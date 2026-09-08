@@ -44,7 +44,7 @@ export async function createGitignoreFilter(
     let directory = root;
     for (let index = 0; index < parts.length; index += 1) {
       const local = await rulesAt(directory);
-      if (local) active.push(local);
+      if (local) active.push({ ...local });
       const target = path.join(directory, parts[index]);
       const isDirectory = index < parts.length - 1;
       let excluded = false;
@@ -57,6 +57,19 @@ export async function createGitignoreFilter(
       // Git does not descend into excluded directories. A .gitignore inside
       // such a directory cannot re-include files or grant upload permission.
       if (excluded) return true;
+      if (isDirectory) {
+        // Each matcher recursively checks parents in its own rule scope. A
+        // deeper .gitignore may have reopened a directory that an ancestor's
+        // matcher still considers excluded. Carry the admitted directory into
+        // every scope so that inherited exclusion cannot reappear when we test
+        // its children. File rules remain intact. Never mutate cached rules.
+        for (const entry of active) {
+          const name = path.relative(entry.directory, target).split(path.sep).join("/");
+          entry.rules = ignore({ ignorecase: false })
+            .add(entry.rules)
+            .add(`!/${escapeLiteralDirectory(name)}/`);
+        }
+      }
       directory = target;
     }
     return false;
@@ -99,4 +112,16 @@ async function readRules(directory: string, cwd: string): Promise<RuleSet | unde
 
 function isMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function escapeLiteralDirectory(name: string): string {
+  if (/[\r\n]/u.test(name)) {
+    throw new FileValidationError(
+      "Source directory contains a newline and cannot be matched safely.",
+      {
+        code: "invalid-ignore-directory",
+      },
+    );
+  }
+  return name.replace(/[\\*?[\] ]/gu, "\\$&");
 }
