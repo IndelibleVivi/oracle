@@ -6,6 +6,7 @@ export function createFsAdapter(fsModule: FsLike): MinimalFsModule {
   const adapter: MinimalFsModule = {
     stat: (targetPath: string) => fsModule.stat(targetPath),
     readdir: (targetPath: string) => fsModule.readdir(targetPath),
+    readFileBytes: (targetPath: string) => fsModule.readFile(targetPath),
     readFile: (targetPath: string, encoding: NodeJS.BufferEncoding) =>
       fsModule.readFile(targetPath, encoding),
   };
