@@ -29,12 +29,13 @@ function createSubmitDispatchScenario({
         return { result: { value: { composerLength: 0, composerEmpty: true } } };
       }
       if (expression.includes("focused: true")) {
-        return { result: { value: { focused: true } } };
+        return { result: { value: { focused: true, bound: true } } };
       }
       if (expression.includes("editorText")) {
         return {
           result: {
             value: {
+              boundFound: true,
               editorText: "hello",
               fallbackValue: "",
               activeValue: "hello",
@@ -599,11 +600,18 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
-            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+            result: {
+              value: {
+                boundFound: true,
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+              },
+            },
           };
         }
         if (expression.includes("button.scrollIntoView")) {
@@ -961,12 +969,17 @@ describe("promptComposer", () => {
             };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
-                value: { editorText: "new prompt", fallbackValue: "", activeValue: "new prompt" },
+                value: {
+                  boundFound: true,
+                  editorText: "new prompt",
+                  fallbackValue: "",
+                  activeValue: "new prompt",
+                },
               },
             };
           }
@@ -1092,12 +1105,13 @@ describe("promptComposer", () => {
           };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
             result: {
               value: {
+                boundFound: true,
                 editorText: truncatedPrompt,
                 fallbackValue: "",
                 activeValue: truncatedPrompt,
@@ -1153,7 +1167,7 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           if (activated) {
@@ -1162,6 +1176,7 @@ describe("promptComposer", () => {
           return {
             result: {
               value: {
+                boundFound: true,
                 editorText: "hello",
                 fallbackValue: "",
                 activeValue: "hello",
@@ -1235,6 +1250,389 @@ describe("promptComposer", () => {
     expect(actions).toContain("press-30-40");
     expect(actions).not.toContain("measure-inactive");
   });
+
+  type ExactNodeComposerRead = {
+    boundFound: boolean;
+    editorText: string;
+    anyCandidateHasContent?: boolean;
+  };
+
+  function createExactNodeComposerScenario({
+    prompt,
+    reads,
+    inferredValue,
+    method = "trusted-click",
+    insertText,
+  }: {
+    prompt: string;
+    reads: ExactNodeComposerRead[];
+    /** What a fresh first-visible candidate reads (the divergent wrapper). */
+    inferredValue?: string;
+    method?: "trusted-click" | "enter";
+    insertText?: () => Promise<void>;
+  }) {
+    const expressions: string[] = [];
+    const exactReads: ExactNodeComposerRead[] = [];
+    let readIndex = 0;
+    let dispatchCount = 0;
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expressions.push(expression);
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+          };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true, bound: true } } };
+        }
+        if (expression.includes("oracle-composer-binding-release")) {
+          return { result: { value: true } };
+        }
+        if (expression.includes("oracle-composer-binding-read")) {
+          const read = reads[Math.min(readIndex, reads.length - 1)];
+          readIndex += 1;
+          exactReads.push(read);
+          return { result: { value: read } };
+        }
+        if (expression.includes("oracle-composer-unchanged-check")) {
+          return { result: { value: { unchanged: true, observedLength: prompt.length } } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return {
+            result: {
+              value: method === "enter" ? { status: "missing" } : { status: "point", x: 10, y: 20 },
+            },
+          };
+        }
+        if (expression.includes("editorText")) {
+          // Legacy first-visible inference: the divergent structural wrapper.
+          const value = inferredValue ?? prompt;
+          return {
+            result: {
+              value: { boundFound: true, editorText: value, fallbackValue: "", activeValue: value },
+            },
+          };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 1,
+              newUserTurnCount: 1,
+              matchingUserTurnCount: 1,
+              userMatched: true,
+              matchedUserTurnIndex: 0,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        };
+      }),
+    };
+    const input = {
+      insertText: vi.fn(insertText ?? (async () => {})),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+        if (type === "mousePressed") dispatchCount += 1;
+      }),
+    };
+    return {
+      runtime,
+      input,
+      page: { bringToFront: vi.fn() },
+      exactReads: () => exactReads,
+      dispatchCount: () => dispatchCount,
+      expressions: () => expressions,
+      releasedBinding: () =>
+        expressions.some((expression) => expression.includes("oracle-composer-binding-release")),
+    };
+  }
+
+  const submitExactNodeScenario = (
+    scenario: ReturnType<typeof createExactNodeComposerScenario>,
+    prompt: string,
+  ) =>
+    submitPrompt(
+      {
+        runtime: scenario.runtime as never,
+        input: scenario.input as never,
+        page: scenario.page as never,
+        baselineTurns: 0,
+        isSubmissionOwner: async () => true,
+      },
+      prompt,
+      Object.assign(vi.fn(), { verbose: false }) as never,
+    );
+
+  test("verifies the exact populated node instead of a divergent first-visible wrapper", async () => {
+    // Regression for the retained-draft emergency: the exact node Oracle typed
+    // into still holds the prompt, while a sibling structural candidate reads
+    // five extra DOM-structural characters. Oracle must verify the node it
+    // populated and keep exactly one trusted dispatch.
+    const prompt = "Retained draft regression: exactly one trusted dispatch.";
+    const wrapperValue = `${prompt}\n\n\n\n\n`;
+    expect(wrapperValue.length).toBe(prompt.length + 5);
+    const scenario = createExactNodeComposerScenario({
+      prompt,
+      reads: [{ boundFound: true, editorText: prompt, anyCandidateHasContent: true }],
+      inferredValue: wrapperValue,
+    });
+
+    await expect(submitExactNodeScenario(scenario, prompt)).resolves.toBe(1);
+
+    expect(scenario.exactReads()).toHaveLength(1);
+    expect(scenario.input.insertText).toHaveBeenCalledWith({ text: prompt });
+    expect(scenario.dispatchCount()).toBe(1);
+    expect(scenario.input.dispatchKeyEvent).not.toHaveBeenCalled();
+    expect(scenario.releasedBinding()).toBe(true);
+  });
+
+  test("settles a transient exact-node structural readback before the one dispatch", async () => {
+    vi.useFakeTimers();
+    try {
+      // Same failure family: the exact populated node itself transiently renders
+      // five extra structural newlines after target activation and then settles
+      // back to the populated prompt. Oracle re-reads only that same node and
+      // dispatches exactly once after it matches.
+      const prompt = "Transient exact-node readback settles before Send.";
+      const transientValue = `${prompt}\n\n\n\n\n`;
+      expect(transientValue.length).toBe(prompt.length + 5);
+      const scenario = createExactNodeComposerScenario({
+        prompt,
+        reads: [
+          { boundFound: true, editorText: transientValue, anyCandidateHasContent: true },
+          { boundFound: true, editorText: prompt, anyCandidateHasContent: true },
+        ],
+        inferredValue: transientValue,
+      });
+
+      const result = submitExactNodeScenario(scenario, prompt);
+      const assertion = expect(result).resolves.toBe(1);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+
+      expect(scenario.exactReads()).toHaveLength(2);
+      expect(scenario.input.insertText).toHaveBeenCalledWith({ text: prompt });
+      expect(scenario.dispatchCount()).toBe(1);
+      expect(scenario.input.dispatchKeyEvent).not.toHaveBeenCalled();
+      expect(scenario.releasedBinding()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("fails closed on a persistent exact-node mutation without dispatching", async () => {
+    vi.useFakeTimers();
+    try {
+      const prompt = "Persistent exact-node mutation fails closed.";
+      const mutatedValue = `${prompt}!`;
+      const scenario = createExactNodeComposerScenario({
+        prompt,
+        reads: [
+          {
+            boundFound: true,
+            editorText: mutatedValue,
+            anyCandidateHasContent: true,
+          },
+        ],
+        // A first-visible candidate still renders the exact prompt; Oracle must
+        // never adopt it as proof that this attempt's node is unchanged.
+        inferredValue: prompt,
+      });
+
+      const result = submitExactNodeScenario(scenario, prompt);
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "composer-mutated-before-send",
+          submissionCommitted: false,
+          dispatchAttempted: false,
+          retrySafe: false,
+          draftRetained: true,
+          expectedLength: prompt.length,
+          observedLength: mutatedValue.length,
+          submissionDiagnostic: expect.objectContaining({
+            composerMatchedPromptBeforeDispatch: false,
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(3_500);
+      await assertion;
+
+      // Bounded: the settle window re-reads the same node and stops.
+      expect(scenario.exactReads().length).toBeGreaterThanOrEqual(2);
+      expect(scenario.exactReads().length).toBeLessThanOrEqual(21);
+      expect(scenario.dispatchCount()).toBe(0);
+      expect(scenario.input.dispatchKeyEvent).not.toHaveBeenCalled();
+      expect(scenario.releasedBinding()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("fails closed when the exact populated composer node is detached or replaced", async () => {
+    // A different candidate still renders the prompt text, but the exact node
+    // Oracle populated is gone, so Oracle must not adopt the replacement.
+    const prompt = "Detached exact node fails closed.";
+    const scenario = createExactNodeComposerScenario({
+      prompt,
+      reads: [
+        {
+          boundFound: false,
+          editorText: "",
+          anyCandidateHasContent: true,
+        },
+      ],
+      inferredValue: prompt,
+    });
+
+    await expect(submitExactNodeScenario(scenario, prompt)).rejects.toMatchObject({
+      message: expect.stringMatching(/do not immediately rerun the prompt/i),
+      details: expect.objectContaining({
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: false,
+        draftRetained: true,
+        expectedLength: prompt.length,
+        observedLength: 0,
+        submissionDiagnostic: expect.objectContaining({
+          composerMatchedPromptBeforeDispatch: false,
+        }),
+      }),
+    });
+
+    // An unavailable binding stops the wait immediately instead of polling, and
+    // it never dispatches.
+    expect(scenario.exactReads()).toHaveLength(1);
+    expect(scenario.dispatchCount()).toBe(0);
+    expect(scenario.input.dispatchKeyEvent).not.toHaveBeenCalled();
+    expect(scenario.releasedBinding()).toBe(true);
+  });
+
+  test("fails closed before typing when the exact-node binding cannot be stamped", async () => {
+    const prompt = "Unbound composer fails before typing.";
+    const expressions: string[] = [];
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expressions.push(expression);
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+          };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true, bound: false } } };
+        }
+        if (expression.includes("oracle-composer-binding-release")) {
+          return { result: { value: true } };
+        }
+        throw new Error("typing must not start without an exact-node binding");
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: { bringToFront: vi.fn() } as never,
+          baselineTurns: 0,
+          isSubmissionOwner: async () => true,
+        },
+        prompt,
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "composer-state-unavailable",
+        submissionCommitted: false,
+        draftRetained: false,
+        retrySafe: true,
+      }),
+    });
+
+    expect(input.insertText).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    expect(
+      expressions.some((expression) => expression.includes("oracle-composer-binding-release")),
+    ).toBe(true);
+  });
+
+  test("releases the exact-node binding when a post-stamp step throws", async () => {
+    const prompt = "Failed insertText still releases the binding.";
+    const scenario = createExactNodeComposerScenario({
+      prompt,
+      reads: [{ boundFound: true, editorText: prompt, anyCandidateHasContent: true }],
+      insertText: async () => {
+        throw new Error("Input.insertText failed");
+      },
+    });
+
+    await expect(submitExactNodeScenario(scenario, prompt)).rejects.toThrow(
+      "Input.insertText failed",
+    );
+
+    expect(scenario.dispatchCount()).toBe(0);
+    expect(scenario.exactReads()).toHaveLength(0);
+    expect(scenario.releasedBinding()).toBe(true);
+  });
+
+  test.each(["trusted-click", "enter"] as const)(
+    "emits only parseable exact-node expressions for %s dispatch",
+    async (method) => {
+      const scenario = createSubmitDispatchScenario({ method, commitAtMs: 0 });
+
+      await expect(
+        submitPrompt(
+          {
+            runtime: scenario.runtime as never,
+            input: scenario.input as never,
+            page: scenario.page as never,
+            baselineTurns: 0,
+            isSubmissionOwner: scenario.isSubmissionOwner,
+          },
+          "hello",
+          Object.assign(vi.fn(), { verbose: false }) as never,
+        ),
+      ).resolves.toBe(1);
+
+      const expressions = scenario.runtime.evaluate.mock.calls.map(([call]) =>
+        String((call as { expression: string }).expression),
+      );
+      // The mocked runtime never executes page-side code, so parse every
+      // generated expression: a broken exact-node binding must not reach a
+      // runtime as invalid JavaScript.
+      for (const expression of expressions) {
+        expect(() => new Function(expression)).not.toThrow();
+      }
+      const usesBinding = (marker: string) =>
+        expressions.some(
+          (expression) => expression.includes(marker) && expression.includes("__oracleComposer_"),
+        );
+      expect(usesBinding("focused: true")).toBe(true);
+      expect(usesBinding("oracle-composer-binding-read")).toBe(true);
+      expect(usesBinding("button.scrollIntoView")).toBe(true);
+      if (method === "enter") {
+        expect(usesBinding("oracle-composer-unchanged-check")).toBe(true);
+      }
+      expect(
+        expressions.some((expression) => expression.includes("oracle-composer-binding-release")),
+      ).toBe(true);
+    },
+  );
 
   test("waits for one delayed first commit without alternate dispatch", async () => {
     vi.useFakeTimers();
@@ -1382,11 +1780,18 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
-            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+            result: {
+              value: {
+                boundFound: true,
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+              },
+            },
           };
         }
         if (expression.includes("button.scrollIntoView")) {
@@ -1880,12 +2285,13 @@ describe("promptComposer", () => {
             return { result: { value: { composerLength: 0, composerEmpty: true } } };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
                 value: {
+                  boundFound: true,
                   editorText: "hello",
                   fallbackValue: "",
                   activeValue: "hello",
@@ -2020,12 +2426,17 @@ describe("promptComposer", () => {
             return { result: { value: { cleared: true } } };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
-                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+                value: {
+                  boundFound: true,
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                },
               },
             };
           }
@@ -2112,12 +2523,17 @@ describe("promptComposer", () => {
             return { result: { value: { cleared: false } } };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
-                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+                value: {
+                  boundFound: true,
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                },
               },
             };
           }
@@ -2208,12 +2624,17 @@ describe("promptComposer", () => {
             throw new Error("draft cleanup must not run while an attachment remains");
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
-                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+                value: {
+                  boundFound: true,
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                },
               },
             };
           }
@@ -2317,12 +2738,17 @@ describe("promptComposer", () => {
             return { result: { value: { cleared: true } } };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
-                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+                value: {
+                  boundFound: true,
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                },
               },
             };
           }
@@ -2397,11 +2823,18 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
-            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+            result: {
+              value: {
+                boundFound: true,
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+              },
+            },
           };
         }
         if (expression.includes("button.scrollIntoView")) {
@@ -2463,12 +2896,13 @@ describe("promptComposer", () => {
             return { result: { value: { composerLength: 0, composerEmpty: true } } };
           }
           if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
+            return { result: { value: { focused: true, bound: true } } };
           }
           if (expression.includes("editorText")) {
             return {
               result: {
                 value: {
+                  boundFound: true,
                   editorText: "hello",
                   fallbackValue: "",
                   activeValue: "hello",
@@ -2551,13 +2985,15 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           composerRead += 1;
           const value = composerRead === 1 ? "hello" : "hellox";
           return {
-            result: { value: { editorText: value, fallbackValue: "", activeValue: value } },
+            result: {
+              value: { boundFound: true, editorText: value, fallbackValue: "", activeValue: value },
+            },
           };
         }
         throw new Error("send must not be attempted after composer mutation");
@@ -2601,11 +3037,18 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
-            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+            result: {
+              value: {
+                boundFound: true,
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+              },
+            },
           };
         }
         if (expression.includes("button.scrollIntoView")) {
@@ -2656,11 +3099,18 @@ describe("promptComposer", () => {
           return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
+          return { result: { value: { focused: true, bound: true } } };
         }
         if (expression.includes("editorText")) {
           return {
-            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+            result: {
+              value: {
+                boundFound: true,
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+              },
+            },
           };
         }
         if (expression.includes("button.scrollIntoView")) {
