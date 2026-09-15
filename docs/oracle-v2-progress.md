@@ -7,7 +7,7 @@ read_when:
 
 # Oracle v2 progress
 
-Updated: 2026-09-04
+Updated: 2026-09-15
 
 Source integration record: `fork/main@efae6f94714df2f63a2c3afbed817def42421f23`
 is the verified PR #9 merge and owner-accepted T0 baseline. PR #8 at
@@ -532,6 +532,20 @@ Fresh T1 source-candidate and live-gate evidence:
   legacy remains default. They do not establish the D19 stable-window resource
   plateau required for G3, and the synthesis timeout is retained as negative
   operational evidence rather than converted into a success claim.
+
+## Legacy composer emergency source note
+
+- 2026-09-15: an owner-authorized bounded emergency source patch restores exact
+  composer identity in the legacy direct-CDP send path.
+  `src/browser/actions/promptComposer.ts` binds the exact composer node Oracle
+  focuses and types into, verifies that node with a bounded settled readback
+  before Send, and releases the temporary binding on every path after the stamp.
+  Detached, replaced, unavailable, or persistently mutated nodes still fail
+  closed with zero dispatch, and the one trusted dispatch and no-duplicate-send
+  invariants are unchanged.
+- This is source only and stays inside the frozen legacy lane: no engine or
+  routing change, no v2 capability, no selector change, no draft adoption, and
+  no gate, installation, or live-runtime claim. T1/T2/T3/G3/G4 are untouched.
 
 ## Tranche ledger
 
