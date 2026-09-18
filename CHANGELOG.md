@@ -42,6 +42,17 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Source selection: use Git-compatible worktree `.gitignore` matching for
+  glob and directory inputs, including nested rules, negation order, root
+  anchors, and excluded parent directories. Exact file arguments retain their
+  explicit override even when mixed with globs; explicit `!` exclusions still
+  win. Invocations below a repository root inherit ancestor rules, and
+  unreadable relevant rule files fail closed.
+- Source text integrity: validate original UTF-8 bytes and reject binary NUL
+  before prompt assembly or broker admission, instead of sealing replacement
+  characters produced by a lossy read. Native filesystem adapters use the same
+  byte-validation path and recheck the size cap after reading. Raw browser
+  uploads and existing inline/upload policy are unchanged.
 - Legacy browser attachment submission: treat a temporarily missing Send
   control as upload-time UI churn instead of an immediate terminal failure,
   while continuing to require the exact attachment set and one trusted
