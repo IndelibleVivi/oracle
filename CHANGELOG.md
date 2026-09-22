@@ -257,6 +257,18 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   deterministic at-rest cookie protection and fresh-profile requirement.
 - Browser: recognize the Japanese `詳細設定` → `推論レベル` controls in ChatGPT's unified Intelligence picker, allowing explicit Pro effort selection without weakening the fail-closed guard for unknown languages.
 - OpenCLI transport: require OpenCLI 1.8.6, execute Oracle's native `GPT-5.6 Sol` + `Pro` picker in the exact submission tab, replace tab-creating `doctor` preflight with `daemon status`, and let companion adapters hard-close their tabs while suppressing the executor's second lease release so it cannot leave reusable `about:blank` placeholders. Pre-submission failures now persist the sanitized OpenCLI stage, code, exit status, and trace summary path.
+- Legacy browser composer identity: bind the exact composer node Oracle
+  focused and typed the prompt into for one attempt, confirm that binding before
+  typing, and verify that same node with a bounded settled readback immediately
+  before Send instead of re-inferring ownership from a fresh first-visible
+  selector. A sibling structural candidate, or a transient structural readback
+  from the exact node itself, no longer makes Oracle abandon an Oracle-authored
+  draft as `composer-mutated-before-send` and block later sessions with
+  `preexisting-composer-content`; a detached, replaced, unavailable, or
+  persistently mutated exact node still fails closed before dispatch with zero
+  dispatch, the one trusted dispatch and commit-verification invariants are
+  unchanged, and the temporary page-local binding is released on every path
+  after the stamp.
 
 ## 0.17.2 — 2026-08-10
 

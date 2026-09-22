@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   INPUT_SELECTORS,
@@ -28,6 +28,8 @@ const TARGET_COMPOSITING_SETTLE_MS = 150;
 const PREEXISTING_COMPOSER_SETTLE_MS = 5_000;
 const PREEXISTING_COMPOSER_POLL_MS = 200;
 const OWNED_DRAFT_CLEAR_SETTLE_MS = 250;
+const COMPOSER_BINDING_SETTLE_MS = 2_000;
+const COMPOSER_BINDING_SETTLE_POLL_MS = 100;
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -58,6 +60,138 @@ const COMPOSER_VALUE_READER_SOURCE = `
         return node.innerText ?? node.textContent ?? '';
       };
 `;
+
+function createComposerBindingKey(): string {
+  return `__oracleComposer_${randomUUID().replaceAll("-", "")}`;
+}
+
+function buildComposerBindingResolverSource(key: string | null | undefined): string {
+  const keyLiteral = JSON.stringify(key ?? null);
+  return `
+      const composerBindingKey = ${keyLiteral};
+      const boundComposerNode = (() => {
+        if (!composerBindingKey) return null;
+        const bound = globalThis[composerBindingKey];
+        return bound instanceof HTMLElement && bound.isConnected ? bound : null;
+      })();
+`;
+}
+
+async function releaseExactComposerBinding(
+  Runtime: ChromeClient["Runtime"],
+  key: string,
+): Promise<void> {
+  const keyLiteral = JSON.stringify(key);
+  try {
+    await Runtime.evaluate({
+      expression: `(() => {
+        // oracle-composer-binding-release
+        delete globalThis[${keyLiteral}];
+      })()`,
+      returnByValue: true,
+    });
+  } catch {
+    // Best-effort only. The key is attempt-unique and is never adopted later.
+  }
+}
+
+interface ExactComposerRead {
+  available: boolean;
+  value: string;
+  anyCandidateHasContent: boolean;
+}
+
+async function readExactBoundComposer(
+  Runtime: ChromeClient["Runtime"],
+  key: string,
+): Promise<ExactComposerRead> {
+  const { result } = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-composer-binding-read
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      ${buildComposerBindingResolverSource(key)}
+      const candidates = inputSelectors
+        .map((selector) => document.querySelector(selector))
+        .filter((node) => Boolean(node));
+      return {
+        boundFound: Boolean(boundComposerNode),
+        editorText: boundComposerNode ? readComposerValue(boundComposerNode) : '',
+        anyCandidateHasContent: candidates.some(
+          (node) => readComposerValue(node).trim().length > 0,
+        ),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = result?.value;
+  return {
+    available: value?.boundFound === true,
+    value: typeof value?.editorText === "string" ? value.editorText : "",
+    anyCandidateHasContent: value?.anyCandidateHasContent === true,
+  };
+}
+
+async function verifyExactBoundComposerPrompt({
+  runtime,
+  key,
+  prompt,
+  logger,
+  diagnostic,
+}: {
+  runtime: ChromeClient["Runtime"];
+  key: string;
+  prompt: string;
+  logger: BrowserLogger;
+  diagnostic: SubmissionDiagnostic;
+}): Promise<void> {
+  const matches = (value: string) => normalizeComposerText(value) === normalizeComposerText(prompt);
+  const deadline = Date.now() + COMPOSER_BINDING_SETTLE_MS;
+  let read = await readExactBoundComposer(runtime, key);
+
+  if (
+    prompt.length >= 50_000 &&
+    read.value.length > 0 &&
+    read.value.length < prompt.length - 2_000
+  ) {
+    await logDomFailure(runtime, logger, "prompt-too-large");
+    throw new BrowserAutomationError(
+      "Prompt appears truncated in the composer (likely too large).",
+      {
+        stage: "submit-prompt",
+        code: "prompt-too-large",
+        submissionCommitted: false,
+        draftRetained: true,
+        promptLength: prompt.length,
+        observedLength: read.value.length,
+        observedDraftSha256: composerSha256(read.value),
+      },
+    );
+  }
+
+  while (read.available && !matches(read.value) && Date.now() < deadline) {
+    await delay(Math.min(COMPOSER_BINDING_SETTLE_POLL_MS, Math.max(0, deadline - Date.now())));
+    read = await readExactBoundComposer(runtime, key);
+  }
+
+  const composerLooksEmpty = read.value.length === 0 && !read.anyCandidateHasContent;
+  diagnostic.composerLengthBeforeDispatch = read.value.length;
+  diagnostic.composerCleared = composerLooksEmpty;
+  diagnostic.draftRetained = !composerLooksEmpty;
+  if (!read.available || !matches(read.value)) {
+    throw new BrowserAutomationError(
+      "Prompt composer changed after Oracle populated it; refusing to send.",
+      {
+        stage: "submit-prompt",
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        draftRetained: diagnostic.draftRetained,
+        expectedLength: prompt.length,
+        observedLength: read.value.length,
+      },
+    );
+  }
+}
 
 export interface AttachmentReadyExpectation {
   name: string;
@@ -295,11 +429,31 @@ async function submitPromptInternal(
   logger: BrowserLogger,
   diagnostic: SubmissionDiagnostic,
 ): Promise<number | null> {
+  // The exact composer-node binding is created before typing and released on
+  // every path afterwards, including failures inside Input.insertText, the
+  // first verification or fallback write, target activation, settled readback,
+  // and either dispatch method. Release is best-effort and attempt-unique.
+  const composerBindingKey = createComposerBindingKey();
+  try {
+    return await runSubmitPromptAttempt(deps, prompt, logger, diagnostic, composerBindingKey);
+  } finally {
+    await releaseExactComposerBinding(deps.runtime, composerBindingKey);
+  }
+}
+
+async function runSubmitPromptAttempt(
+  deps: SubmitPromptDependencies,
+  prompt: string,
+  logger: BrowserLogger,
+  diagnostic: SubmissionDiagnostic,
+  composerBindingKey: string,
+): Promise<number | null> {
   const { runtime, input } = deps;
 
   await waitForDomReady(runtime, logger, deps.inputTimeoutMs ?? undefined);
   await assertPromptComposerEmptyForSubmission(runtime, diagnostic);
   const encodedPrompt = JSON.stringify(prompt);
+  const composerBindingKeyLiteral = JSON.stringify(composerBindingKey);
   const focusResult = await runtime.evaluate({
     expression: `(() => {
       ${buildClickDispatcher()}
@@ -341,9 +495,14 @@ async function submitPromptInternal(
       }
       const preferred = candidates.find((node) => isVisible(node)) || candidates[0];
       if (preferred && focusNode(preferred)) {
-        return { focused: true };
+        // Bind this exact node to the attempt before Input.insertText lands in
+        // it, so the later pre-dispatch identity read cannot drift to another
+        // first-visible candidate.
+        globalThis[${composerBindingKeyLiteral}] = preferred;
+        const bound = globalThis[${composerBindingKeyLiteral}] === preferred;
+        return { focused: true, bound };
       }
-      return { focused: false };
+      return { focused: false, bound: false };
     })()`,
     returnByValue: true,
     awaitPromise: true,
@@ -351,6 +510,19 @@ async function submitPromptInternal(
   if (!focusResult.result?.value?.focused) {
     await logDomFailure(runtime, logger, "focus-textarea");
     throw new Error("Failed to focus prompt textarea");
+  }
+  if (focusResult.result?.value?.bound !== true) {
+    // Without an exact-node binding Oracle cannot prove which composer node it
+    // populated, so it refuses to type at all instead of sending later.
+    throw new BrowserAutomationError(
+      "Oracle could not bind the exact ChatGPT composer node before typing; refusing to modify the page.",
+      {
+        stage: "submit-prompt",
+        code: "composer-state-unavailable",
+        submissionCommitted: false,
+        draftRetained: false,
+      },
+    );
   }
 
   await input.insertText({ text: prompt });
@@ -367,6 +539,7 @@ async function submitPromptInternal(
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
       ${COMPOSER_VALUE_READER_SOURCE}
+      ${buildComposerBindingResolverSource(composerBindingKey)}
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
         const rect = node.getBoundingClientRect();
@@ -377,7 +550,9 @@ async function submitPromptInternal(
         .filter((node) => Boolean(node));
       const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
       return {
-        editorText: readComposerValue(editor),
+        // Prefer the exact node Oracle typed into; only fall back to the legacy
+        // primary selector when no attempt binding resolves.
+        editorText: readComposerValue(boundComposerNode || editor),
         fallbackValue: fallback?.value ?? '',
         activeValue: readComposerValue(active),
       };
@@ -392,21 +567,21 @@ async function submitPromptInternal(
   const fallbackValueTrimmed = fallbackValueRaw?.trim?.() ?? "";
   const activeValueTrimmed = activeValueRaw?.trim?.() ?? "";
   if (!editorTextTrimmed && !fallbackValueTrimmed && !activeValueTrimmed) {
-    // Learned: occasionally Input.insertText doesn't land in the editor; force textContent/value + input events.
+    // Learned: occasionally Input.insertText does not land. Write only the
+    // exact node selected above; never switch to another inferred composer.
     await runtime.evaluate({
       expression: `(() => {
-        const fallback = document.querySelector(${fallbackSelectorLiteral});
-        if (fallback) {
-          fallback.value = ${encodedPrompt};
-          fallback.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
-          fallback.dispatchEvent(new Event('change', { bubbles: true }));
+        ${buildComposerBindingResolverSource(composerBindingKey)}
+        if (!boundComposerNode) return false;
+        if (boundComposerNode instanceof HTMLTextAreaElement) {
+          boundComposerNode.value = ${encodedPrompt};
+          boundComposerNode.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
+          boundComposerNode.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
         }
-        const editor = document.querySelector(${primarySelectorLiteral});
-        if (editor) {
-          editor.textContent = ${encodedPrompt};
-          // Nudge ProseMirror to register the textContent write so its state/send-button updates
-          editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
-        }
+        boundComposerNode.textContent = ${encodedPrompt};
+        boundComposerNode.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${encodedPrompt}, inputType: 'insertFromPaste' }));
+        return true;
       })()`,
     });
   }
@@ -418,79 +593,18 @@ async function submitPromptInternal(
       ? Math.floor(deps.baselineTurns)
       : null;
   diagnostic.preDispatchBaseline = preDispatchBaseline;
-  const promptLength = prompt.length;
   await activateExactSubmissionTarget({
     Page: deps.page,
     isSubmissionOwner: deps.isSubmissionOwner,
     diagnostic,
   });
-  const postVerification = await runtime.evaluate({
-    expression: `(() => {
-      const editor = document.querySelector(${primarySelectorLiteral});
-      const fallback = document.querySelector(${fallbackSelectorLiteral});
-      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-      ${COMPOSER_VALUE_READER_SOURCE}
-      const isVisible = (node) => {
-        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
-        const rect = node.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-      const candidates = inputSelectors
-        .map((selector) => document.querySelector(selector))
-        .filter((node) => Boolean(node));
-      const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
-      return {
-        editorText: readComposerValue(editor),
-        fallbackValue: fallback?.value ?? '',
-        activeValue: readComposerValue(active),
-      };
-    })()`,
-    returnByValue: true,
+  await verifyExactBoundComposerPrompt({
+    runtime,
+    key: composerBindingKey,
+    prompt,
+    logger,
+    diagnostic,
   });
-  const observedEditor = postVerification.result?.value?.editorText ?? "";
-  const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
-  const observedActive = postVerification.result?.value?.activeValue ?? "";
-  const observedComposer = observedActive || observedEditor || observedFallback;
-  const observedLength = Math.max(
-    observedEditor.length,
-    observedFallback.length,
-    observedActive.length,
-  );
-  diagnostic.composerLengthBeforeDispatch = observedLength;
-  diagnostic.composerCleared = observedLength === 0;
-  diagnostic.draftRetained = observedLength > 0;
-  if (promptLength >= 50_000 && observedLength > 0 && observedLength < promptLength - 2_000) {
-    // Learned: very large prompts can truncate silently; fail fast so we can fall back to file uploads.
-    await logDomFailure(runtime, logger, "prompt-too-large");
-    throw new BrowserAutomationError(
-      "Prompt appears truncated in the composer (likely too large).",
-      {
-        stage: "submit-prompt",
-        code: "prompt-too-large",
-        submissionCommitted: false,
-        draftRetained: true,
-        promptLength,
-        observedLength,
-        observedDraftSha256: composerSha256(observedComposer),
-      },
-    );
-  }
-
-  // Re-read the exact activated target's visible composer immediately before
-  // Send and fail closed if anything changed after Oracle populated it.
-  if (normalizeComposerText(observedComposer) !== normalizeComposerText(prompt)) {
-    throw new BrowserAutomationError(
-      "Prompt composer changed after Oracle populated it; refusing to send.",
-      {
-        stage: "submit-prompt",
-        code: "composer-mutated-before-send",
-        submissionCommitted: false,
-        draftRetained: observedLength > 0,
-        expectedLength: prompt.length,
-        observedLength,
-      },
-    );
-  }
   diagnostic.composerMatchedPromptBeforeDispatch = true;
 
   let dispatchIntentPersisted = false;
@@ -530,11 +644,12 @@ async function submitPromptInternal(
       () => markPotentiallySubmittingEvent("trusted-click", "mousePressed"),
       persistDispatchIntent,
       revalidateAfterDispatchIntent,
+      composerBindingKey,
     );
     if (!clicked) {
       await persistDispatchIntent();
       await revalidateAfterDispatchIntent();
-      await assertComposerUnchanged(runtime, prompt);
+      await assertComposerUnchanged(runtime, prompt, composerBindingKey);
       await dispatchEnterKey(input, () => markPotentiallySubmittingEvent("enter", "enterKeyDown"));
       logger("Submitted prompt via Enter key");
     } else {
@@ -1555,6 +1670,7 @@ async function attemptSendButton(
   onPotentiallySubmittingEvent?: () => Promise<void> | void,
   persistDispatchIntent?: () => Promise<void> | void,
   revalidateAfterDispatchIntent?: () => Promise<void> | void,
+  composerBindingKey?: string | null,
 ): Promise<boolean> {
   const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
   const expectedPromptLiteral = JSON.stringify(expectedPrompt ?? null);
@@ -1587,11 +1703,18 @@ async function attemptSendButton(
       );
     };
     if (expectedPrompt !== null) {
+      ${buildComposerBindingResolverSource(composerBindingKey ?? null)}
       const inputs = inputSelectors
         .map((selector) => document.querySelector(selector))
         .filter((node) => Boolean(node));
       const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-      const observed = readComposerValue(active);
+      // With an attempt binding the identity decision comes from the exact node
+      // Oracle typed into; a detached or replaced node reads empty and fails
+      // closed. Only the legacy inner caller without a binding keeps the
+      // first-visible read.
+      const observed = readComposerValue(
+        composerBindingKey ? boundComposerNode : active,
+      );
       if (normalizeComposer(observed) !== normalizeComposer(expectedPrompt)) {
         return { status: 'mutated', observedLength: observed.length };
       }
@@ -1756,12 +1879,14 @@ async function attemptSendButton(
 async function assertComposerUnchanged(
   Runtime: ChromeClient["Runtime"],
   expectedPrompt: string,
+  composerBindingKey?: string | null,
 ): Promise<void> {
   const result = await Runtime.evaluate({
     expression: `(() => {
       // oracle-composer-unchanged-check
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
       ${COMPOSER_VALUE_READER_SOURCE}
+      ${buildComposerBindingResolverSource(composerBindingKey ?? null)}
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
         const rect = node.getBoundingClientRect();
@@ -1774,7 +1899,9 @@ async function assertComposerUnchanged(
         .map((selector) => document.querySelector(selector))
         .filter((node) => Boolean(node));
       const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-      const observed = readComposerValue(active);
+      const observed = readComposerValue(
+        composerBindingKey ? boundComposerNode : active,
+      );
       return {
         unchanged: normalizeComposer(observed) === normalizeComposer(${JSON.stringify(expectedPrompt)}),
         observedLength: observed.length,
