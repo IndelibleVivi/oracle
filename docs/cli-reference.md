@@ -69,6 +69,37 @@ receipts, and barrier state advance together.
 | `--files-report`                      | Print per-file token usage.                                                                      |
 | `--dry-run [summary\|json\|full]`     | Preview without sending.                                                                         |
 
+### Source selection and text integrity
+
+Glob and directory inputs honor worktree `.gitignore` rules, including ordered
+negations, root anchors, and rules in nested directories. An invocation within
+a repository inherits rules from the nearest ancestor `.git` marker down to
+each candidate; without that marker, the working directory is the boundary.
+Git's index, `.git/info/exclude`, and global excludes are not consulted. Rule
+matching is case-sensitive and does not load Git configuration. An excluded
+parent directory cannot be reopened by a rule inside it. Unreadable or invalid
+relevant rule files stop selection instead of silently admitting their files.
+
+An exact file argument explicitly overrides ignore rules, whether used alone
+or alongside globs. An explicit `!` exclusion still removes it. Naming a
+directory does not grant the same per-file override. Existing default-ignored
+directories and explicit hidden-path consent remain separate filters; broad
+globs do not follow symlinks.
+
+Text sources must be valid UTF-8 without binary NUL bytes. Validation uses the
+original bytes before any replacement decoding or bundle normalization, and
+checks the per-file size cap again after reading. Convert non-UTF-8 sources
+explicitly before including them as text. Raw browser uploads such as PDFs
+continue through the separate binary upload path. An empty resolved selection
+or invalid text fails before broker intent/admission; it is not downgraded to
+a prompt-only consultation.
+
+The default browser attachment policy remains `auto`: selected small text may
+be fully present inline without an attachment card. Correct file selection
+and an upload icon are separate facts. `broker` continues to seal selected
+text into one source bundle; these input checks neither select an engine nor
+change a previously admitted job's identity or recovery rules.
+
 ## Opt-in Oracle v2 broker candidate
 
 R8 exposes the durable worker path for explicit CLI validation. It is not the

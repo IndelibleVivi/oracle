@@ -75,6 +75,8 @@ oracle --engine browser \
   --file "src/**"
 ```
 
+Glob 和目录输入遵循仓库的 `.gitignore`（包括嵌套规则）；明确点名的文件会覆盖 ignore 规则，显式 `!` 排除仍优先。文本文件须是有效 UTF-8 且不含 binary NUL，否则咨询会在投递前停止。小文本可能直接内联在 prompt 中，因此没有附件卡片不代表没有交付文件内容。规则细节见 [CLI Reference](docs/cli-reference.md)。
+
 长运行会保留为可恢复 session。Pro 暂时安静时，不要另起一份重复咨询；先读取或 reattach 已有 session：
 
 ```bash

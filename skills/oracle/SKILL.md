@@ -208,7 +208,12 @@ comma-separated entries.
 - Exclude: prefix a pattern with `!`, for example `--file "!src/**/*.test.ts"`
 - Default ignored directories: `node_modules`, `dist`, `coverage`, `.git`,
   `.turbo`, `.next`, `build`, and `tmp`
-- Globs honor `.gitignore` and do not follow symlinks.
+- Globs/directories honor worktree `.gitignore` rules (including nested rules
+  and negations) and do not follow symlinks. An exact file argument overrides
+  ignores even alongside globs; explicit `!` exclusions still win.
+- Text inputs require valid UTF-8 without binary NUL. Convert other encodings
+  explicitly; invalid text stops preparation before broker admission. Browser
+  raw uploads retain their separate binary path.
 - Dotfiles require an explicit dot-segment in the pattern, such as
   `--file ".github/**"`.
 - Files over 1 MB are rejected by default; configure
