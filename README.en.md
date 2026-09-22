@@ -75,6 +75,8 @@ oracle --engine browser \
   --file "src/**"
 ```
 
+Glob and directory inputs honor repository `.gitignore` rules, including nested rules. An explicitly named file overrides those rules; an explicit `!` exclusion still wins. Text files must be valid UTF-8 without binary NUL or the consultation stops before dispatch. Small text files may be inlined into the prompt, so no attachment card does not mean their contents were omitted. See the [CLI Reference](docs/cli-reference.md) for the exact selection rules.
+
 Long runs remain recoverable sessions. When Pro is quiet, do not create a duplicate consultation. Read or reattach the existing session first:
 
 ```bash
