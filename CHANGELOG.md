@@ -42,6 +42,10 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- MCP `consult` now marks a long final log as a preview and returns its full
+  byte length and read-only session-log resource URI, so callers can retrieve
+  the complete stored log instead of silently treating the last 4,000 characters
+  as the whole result.
 - Source selection: use Git-compatible worktree `.gitignore` matching for
   glob and directory inputs, including nested rules, negation order, root
   anchors, and excluded parent directories. Exact file arguments retain their

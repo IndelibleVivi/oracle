@@ -11,11 +11,39 @@ import {
   buildConsultBrowserConfig,
   buildConsultDryRunResolved,
   formatConsultDryRunResolved,
+  projectConsultLog,
   registerConsultTool,
   summarizeArtifactsForConsult,
   summarizeImageArtifactsForConsult,
   summarizeModelRunsForConsult,
 } from "../../src/mcp/tools/consult.ts";
+
+describe("projectConsultLog", () => {
+  test("marks a long consult log as a preview and exposes its full resource", () => {
+    const log = `opening evidence\n${"a".repeat(5000)}\nclosing evidence`;
+    const result = projectConsultLog(log, "session-42");
+    expect(result).toMatchObject({
+      outputTruncated: true,
+      logBytes: Buffer.byteLength(log, "utf8"),
+      logResourceUri: "oracle-session://session-42/log",
+    });
+    expect(result.output).not.toContain("opening evidence");
+    expect(result.output).toContain("closing evidence");
+    expect(result.output.length).toBeLessThanOrEqual(4000);
+  });
+
+  test("keeps a short log complete and does not split a surrogate pair", () => {
+    expect(projectConsultLog("full answer 💫", "session-43")).toMatchObject({
+      output: "full answer 💫",
+      outputTruncated: false,
+    });
+    const long = `${"💫".repeat(2001)}x`;
+    const result = projectConsultLog(long, "session-44");
+    expect(result.outputTruncated).toBe(true);
+    expect(result.output.startsWith("\udcab")).toBe(false);
+    expect(result.output.endsWith("x")).toBe(true);
+  });
+});
 
 describe("summarizeModelRunsForConsult", () => {
   test("applies the ChatGPT Pro Heavy consult preset as overridable defaults", () => {

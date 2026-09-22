@@ -125,6 +125,8 @@ CLI/MCP 的 broker client、job tools、timeout/reconnect 语义见
 [CLI reference](docs/cli-reference.md) 与 [MCP](docs/mcp.md)。在 G3 owner gate
 以前，legacy engine 仍是默认；源码候选完成不等于安装、激活或默认切换。
 
+MCP `consult` 的长日志返回会明确标记预览截断，并提供 `logResourceUri` 读取完整保存内容；用法见 [MCP](docs/mcp.md)。
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle
