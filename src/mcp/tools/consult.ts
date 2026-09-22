@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { finished } from "node:stream/promises";
 import { z } from "zod";
 import { getCliVersion } from "../../version.js";
 import {
@@ -14,16 +15,16 @@ import { resolveRemoteServiceConfig } from "../../remote/remoteServiceConfig.js"
 import { createRemoteBrowserExecutor } from "../../remote/client.js";
 import type { BrowserSessionRunnerDeps } from "../../browser/sessionRunner.js";
 
-async function readSessionLogTail(sessionId: string, maxBytes: number): Promise<string | null> {
-  try {
-    const log = await sessionStore.readLog(sessionId);
-    if (log.length <= maxBytes) {
-      return log;
-    }
-    return log.slice(-maxBytes);
-  } catch {
-    return null;
-  }
+export function projectConsultLog(log: string, sessionId: string, maxCharacters = 4000) {
+  let output = log.length > maxCharacters ? log.slice(-maxCharacters) : log;
+  // A UTF-16 slice may start halfway through an emoji or another astral character.
+  if (output && /[\uDC00-\uDFFF]/u.test(output[0] ?? "")) output = output.slice(1);
+  return {
+    output,
+    outputTruncated: output.length < log.length,
+    logBytes: Buffer.byteLength(log, "utf8"),
+    logResourceUri: `oracle-session://${encodeURIComponent(sessionId)}/log`,
+  };
 }
 import { performSessionRun } from "../../cli/sessionRunner.js";
 import { runDryRunSummary } from "../../cli/dryRun.js";
@@ -233,6 +234,9 @@ export const consultOutputShape = {
   status: z.string(),
   state: z.string().optional(),
   output: z.string(),
+  outputTruncated: z.boolean().optional(),
+  logBytes: z.number().int().nonnegative().optional(),
+  logResourceUri: z.string().optional(),
   dryRun: z.boolean().optional(),
   timedOut: z.boolean().optional(),
   resolved: consultDryRunResolvedShape.optional(),
@@ -775,6 +779,7 @@ export async function runConsultTool(
     return true;
   };
 
+  let logFlushFailed = false;
   try {
     await performSessionRun({
       sessionMeta,
@@ -799,21 +804,43 @@ export async function runConsultTool(
     };
   } finally {
     logWriter.stream.end();
+    try {
+      await finished(logWriter.stream);
+    } catch {
+      logFlushFailed = true;
+    }
+  }
+
+  if (logFlushFailed) {
+    return {
+      isError: true,
+      content: textContent(
+        `Session ${sessionMeta.id} finished, but its log could not be fully persisted. Inspect the stored session before relying on the result.`,
+      ),
+    };
   }
 
   try {
     const finalMeta = (await sessionStore.readSession(sessionMeta.id)) ?? sessionMeta;
     const summary = `Session ${sessionMeta.id} (${finalMeta.status})`;
-    const logTail = await readSessionLogTail(sessionMeta.id, 4000);
+    const logPreview = projectConsultLog(
+      await sessionStore.readLog(sessionMeta.id),
+      sessionMeta.id,
+    );
     const modelsSummary = summarizeModelRunsForConsult(finalMeta.models);
     const artifacts = summarizeArtifactsForConsult(finalMeta.artifacts);
     const images = summarizeImageArtifactsForConsult(finalMeta.artifacts);
+    const previewNotice = logPreview.outputTruncated
+      ? `Log preview truncated; read the full ${logPreview.logBytes}-byte log at ${logPreview.logResourceUri}`
+      : "";
     return {
-      content: textContent([summary, logTail || "(log empty)"].join("\n").trim()),
+      content: textContent(
+        [summary, previewNotice, logPreview.output || "(log empty)"].filter(Boolean).join("\n"),
+      ),
       structuredContent: {
         sessionId: sessionMeta.id,
         status: finalMeta.status,
-        output: logTail ?? "",
+        ...logPreview,
         models: modelsSummary,
         artifacts,
         images,

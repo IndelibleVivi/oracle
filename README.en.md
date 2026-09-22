@@ -129,6 +129,8 @@ clients, job tools, and timeout/reconnect semantics. The legacy engine remains
 the default until the G3 owner gate; source-candidate completion is not
 installation, activation, or a default switch.
 
+For long logs, MCP `consult` explicitly marks a truncated preview and provides `logResourceUri` to read the complete stored content; see [MCP](docs/mcp.md).
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle
