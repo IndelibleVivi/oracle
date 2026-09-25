@@ -27,6 +27,14 @@ until G3. R9 continues to map new Batch lane and synthesis attempts to
 Batch-owned v2 jobs while preserving parent manifest, sealing, blind-lane,
 barrier, answer-integrity, and owner-closure authority.
 
+On 2026-09-25, the owner authorized one bounded availability exception after a
+ChatGPT frontend change removed the legacy picker trigger and power-slider
+markers and made the shipped/default browser route fail before Send. The
+admitted repair is limited to recognizing the newly observed semantic
+Intelligence trigger, simple picker view, and accessible effort status, plus
+focused regression coverage; it does not weaken model/effort proof or change
+dispatch, recovery, browser ownership, or the G3/G4 gate.
+
 T0 froze and the owner accepted the disposable-attempt plan against current
 source. The existing v2
 fixed-profile runtime is a superseded candidate, not the intended G3 runtime:

@@ -512,6 +512,8 @@ export function buildThinkingTimeExpression(
     };
     const currentModelKind = () => modelKindFromNode(findModelButton());
     const effectiveTargetModelKind = () => TARGET_MODEL_KIND || currentModelKind();
+    const SIMPLE_VIEW_SELECTOR =
+      '[data-model-picker-view="simple"], [data-testid="composer-model-picker-slider-simple-view"]';
     const isIntelligenceEffortMenu = (menu) => {
       if (menu?.getAttribute?.('data-testid') === 'composer-intelligence-picker-content') {
         return true;
@@ -630,6 +632,7 @@ export function buildThinkingTimeExpression(
       if (!isVisible(menu)) return false;
       if (menu.getAttribute?.('data-testid') === 'composer-intelligence-picker-content') return true;
       if (menu.querySelector?.(INTELLIGENCE_MENU_SELECTOR)) return true;
+      if (isVisible(menu.querySelector?.(SIMPLE_VIEW_SELECTOR))) return true;
       const label = menu.querySelector?.('.__menu-label, [class*="menu-label"]');
       const labelText = normalize(label?.textContent ?? '');
       return (
@@ -828,7 +831,6 @@ export function buildThinkingTimeExpression(
     // ArrowRight on its Power row; no static Pro option exists in the menu DOM.
     // Eligibility comes from the verified five-position control shape plus an
     // explicit Pro request, never from one model family or one locale's ordinal.
-    const SIMPLE_VIEW_SELECTOR = '[data-testid="composer-model-picker-slider-simple-view"]';
     const readIntegerAttribute = (node, name) => {
       const raw = String(node?.getAttribute?.(name) ?? '').trim();
       if (!/^-?\\d+$/.test(raw)) return null;
@@ -851,6 +853,7 @@ export function buildThinkingTimeExpression(
       const current = readIntegerAttribute(valueNode, 'aria-valuenow');
       const minimum = readIntegerAttribute(valueNode, 'aria-valuemin');
       const maximum = readIntegerAttribute(valueNode, 'aria-valuemax');
+      const statusLabel = simpleView.querySelector?.('[role="status"]')?.textContent;
       const interactive = Boolean(
         control &&
           control instanceof EventTarget &&
@@ -868,6 +871,7 @@ export function buildThinkingTimeExpression(
           maximum - minimum === 4,
       );
       const selectedLabel = [
+        statusLabel,
         valueNode?.getAttribute?.('aria-valuetext'),
         control?.getAttribute?.('aria-valuetext'),
         simpleView.textContent,
@@ -1136,10 +1140,14 @@ export function buildThinkingTimeExpression(
     // controlled menu contains the effort levels. Prefer this ownership boundary
     // before probing older model-picker layouts.
     const COMPOSER_EFFORT_PILL_SELECTORS = [
+      'button[data-codex-intelligence-trigger="true"][aria-haspopup="menu"]',
       'form button.__composer-pill',
       '[data-testid="composer-footer-actions"] button.__composer-pill',
       '.__composer-pill-composite button.__composer-pill',
     ];
+    const isCurrentIntelligenceTrigger = (button) =>
+      button?.getAttribute?.('data-codex-intelligence-trigger') === 'true' &&
+      button?.getAttribute?.('aria-haspopup') === 'menu';
     const findComposerEffortPill = () => {
       const seen = new Set();
       let exactProFallback = null;
@@ -1162,7 +1170,10 @@ export function buildThinkingTimeExpression(
           ) {
             return button;
           }
-          if ((TARGET_IS_GPT56_MODEL || TARGET_LEVEL === 'pro') && button.matches?.('button.__composer-pill')) {
+          if (
+            (TARGET_IS_GPT56_MODEL || TARGET_LEVEL === 'pro') &&
+            (button.matches?.('button.__composer-pill') || isCurrentIntelligenceTrigger(button))
+          ) {
             if (
               hasExactProPrefix(
                 (button.getAttribute?.('aria-label') ?? '') + ' ' + (button.textContent ?? ''),
@@ -1286,13 +1297,14 @@ export function buildThinkingTimeExpression(
           if (proEffortResult) {
             return proEffortResult;
           }
-          // Flat rows win when present; only descend into Advanced -> Effort when
-          // this menu has no matching tier of its own (the slider layouts).
+          const sliderResult = await selectProFromPowerSlider(menu, composerModelKind);
+          if (sliderResult) {
+            return sliderResult;
+          }
+          // A structurally verified Power slider wins before text matching because
+          // the current model-view toggle itself contains "Pro". Without a slider,
+          // flat rows win; descend only when no matching tier exists.
           if (!findOptionInMenu(menu, composerModelKind)) {
-            const sliderResult = await selectProFromPowerSlider(menu, composerModelKind);
-            if (sliderResult) {
-              return sliderResult;
-            }
             const advancedResult = await selectEffortFromAdvancedSubmenu(menu, composerModelKind);
             if (advancedResult) {
               return advancedResult;

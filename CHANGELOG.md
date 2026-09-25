@@ -42,6 +42,11 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Legacy browser picker compatibility: recognize ChatGPT's current semantic
+  Intelligence trigger (`data-codex-intelligence-trigger`), simple picker view
+  (`data-model-picker-view="simple"`), and accessible effort status when the
+  composer no longer exposes the older picker markers. Strict model and Pro
+  effort proof remains unchanged, and picker failures still abort before Send.
 - MCP `consult` now marks a long final log as a preview and returns its full
   byte length and read-only session-log resource URI, so callers can retrieve
   the complete stored log instead of silently treating the last 4,000 characters
