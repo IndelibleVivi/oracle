@@ -426,6 +426,8 @@ export function buildThinkingTimeExpression(
         items,
       };
     };
+    const SIMPLE_VIEW_SELECTOR =
+      '[data-model-picker-view="simple"], [data-testid="composer-model-picker-slider-simple-view"]';
     const collectPickerDiagnostic = () => {
       try {
         const trailings = findTrailingButtons();
@@ -446,7 +448,7 @@ export function buildThinkingTimeExpression(
           null;
         const pickerShape = (() => {
           const simple = Array.from(
-            document.querySelectorAll('[data-testid="composer-model-picker-slider-simple-view"]'),
+            document.querySelectorAll(SIMPLE_VIEW_SELECTOR),
           ).find(isVisible);
           if (simple) {
             if (!sliderState) return 'uninspected-power-slider';
@@ -512,8 +514,6 @@ export function buildThinkingTimeExpression(
     };
     const currentModelKind = () => modelKindFromNode(findModelButton());
     const effectiveTargetModelKind = () => TARGET_MODEL_KIND || currentModelKind();
-    const SIMPLE_VIEW_SELECTOR =
-      '[data-model-picker-view="simple"], [data-testid="composer-model-picker-slider-simple-view"]';
     const isIntelligenceEffortMenu = (menu) => {
       if (menu?.getAttribute?.('data-testid') === 'composer-intelligence-picker-content') {
         return true;
@@ -870,21 +870,29 @@ export function buildThinkingTimeExpression(
           current <= maximum &&
           maximum - minimum === 4,
       );
-      const selectedLabel = [
+      const explicitValueLabels = [
         statusLabel,
         valueNode?.getAttribute?.('aria-valuetext'),
         control?.getAttribute?.('aria-valuetext'),
-        simpleView.textContent,
-        valueNode?.getAttribute?.('aria-label'),
       ]
         .map((value) => String(value ?? '').replace(/\\s+/g, ' ').trim())
-        .find(Boolean) || null;
-      const exactProLabel = selectedLabel && hasExactProPrefix(selectedLabel)
-        ? selectedLabel
-        : null;
+        .filter(Boolean);
+      const fallbackLabels = [simpleView.textContent, valueNode?.getAttribute?.('aria-label')]
+        .map((value) => String(value ?? '').replace(/\\s+/g, ' ').trim())
+        .filter(Boolean);
+      const candidateLabels = explicitValueLabels.length > 0
+        ? explicitValueLabels
+        : fallbackLabels;
+      const selectedLabel = candidateLabels[0] || null;
+      const exactProLabel = candidateLabels.find(hasExactProPrefix) || null;
+      const explicitNonProLabel = explicitValueLabels.find(
+        (label) => !hasExactProPrefix(label) && matchesAnyEffortLevel(label),
+      );
+      const explicitValueConflict = Boolean(exactProLabel && explicitNonProLabel);
       const atMaximum = shapeValid && current === maximum;
       const semanticContradiction = Boolean(
-        selectedLabel && ((exactProLabel !== null) !== atMaximum),
+        explicitValueConflict ||
+          (selectedLabel && ((exactProLabel !== null) !== atMaximum)),
       );
       return {
         control,
