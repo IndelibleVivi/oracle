@@ -488,10 +488,12 @@ const evaluateAdvancedModelPickerExpression = async ({
   targetModel = "Thinking 5.5",
   initialModel = "GPT-5.6 Sol",
   modelWord = "Model",
+  currentTriggerOnly = false,
 }: {
   targetModel?: string;
   initialModel?: "GPT-5.5" | "GPT-5.6 Sol";
   modelWord?: string;
+  currentTriggerOnly?: boolean;
 } = {}) => {
   class FakeEventTarget {
     dispatchEvent(_event: unknown): boolean {
@@ -696,8 +698,15 @@ const evaluateAdvancedModelPickerExpression = async ({
     "High",
     {
       tag: "button",
-      class: "__composer-pill",
-      "data-testid": "model-switcher-dropdown-button",
+      ...(currentTriggerOnly
+        ? {
+            "aria-label": "Select ChatGPT model",
+            "data-codex-intelligence-trigger": "true",
+          }
+        : {
+            class: "__composer-pill",
+            "data-testid": "model-switcher-dropdown-button",
+          }),
       "aria-haspopup": "menu",
       "aria-expanded": "false",
     },
@@ -717,16 +726,23 @@ const evaluateAdvancedModelPickerExpression = async ({
     body: { innerText: "" },
     getElementById: (id: string) => (id === "advanced-model-submenu" ? modelSubmenu : null),
     querySelector: (selector: string) => {
+      if (currentTriggerOnly && selector.includes('data-codex-intelligence-trigger="true"')) {
+        return modelButton;
+      }
       if (
-        selector.includes("model-switcher-dropdown-button") ||
-        selector.includes("button.__composer-pill")
+        !currentTriggerOnly &&
+        (selector.includes("model-switcher-dropdown-button") ||
+          selector.includes("button.__composer-pill"))
       ) {
         return modelButton;
       }
       return null;
     },
     querySelectorAll: (selector: string) => {
-      if (selector.includes("button.__composer-pill") || selector.includes("button[aria-label]")) {
+      if (selector.includes("button.__composer-pill")) {
+        return currentTriggerOnly ? [] : [modelButton];
+      }
+      if (selector.includes("button[aria-label]")) {
         return [modelButton];
       }
       if (selector.includes('role="menu"') || selector.includes("data-radix")) {
@@ -1801,10 +1817,18 @@ describe("browser model selection matchers", () => {
 
   it("finds the rewritten ChatGPT composer pill model button", () => {
     const expression = buildModelSelectionExpressionForTest("gpt-5.5-pro");
+    expect(expression).toContain('data-codex-intelligence-trigger="true"');
     expect(expression).toContain('data-testid="model-switcher-dropdown-button"');
     expect(expression).toContain("button.__composer-pill[aria-haspopup=");
     expect(expression).toContain("const findModelButton = () =>");
     expect(expression).toContain("button.__composer-pill')).find(looksLikeModelPill)");
+  });
+
+  it("finds the current ChatGPT intelligence trigger without legacy picker markers", async () => {
+    const harness = await evaluateAdvancedModelPickerExpression({ currentTriggerOnly: true });
+    expect(harness.result).toEqual({ status: "switched", label: "GPT-5.5" });
+    expect(harness.selectedModel).toBe("GPT-5.5");
+    expect(harness.clicks.advanced).toBeGreaterThan(0);
   });
 
   it("selects GPT-5.5 through the collapsed Advanced -> Model submenu", async () => {

@@ -36,7 +36,13 @@ or maintainer-only release instructions.
   the implementation-inspection baseline, and `fork/main@e6f170ff` remains the
   historical pre-v2 legacy baseline. Until G4, do not add capabilities to or broadly
   refactor `src/browser/**`; only a bounded data-loss or duplicate-send
-  emergency fix may enter the frozen legacy lane.
+  emergency fix may enter the frozen legacy lane. The sole additional exception
+  is the owner-authorized 2026-09-25 semantic-picker compatibility delta recorded
+  in `docs/oracle-v2-master-plan.md`: it may recognize the newly observed
+  Intelligence trigger, simple picker view, and accessible effort status with
+  focused regression coverage, without weakening proof or changing Send,
+  recovery, ownership, or G3/G4. It does not authorize other legacy availability
+  work.
 - The accepted v2 architecture and complete coverage ledger live in
   `docs/oracle-v2-master-plan.md`. Current tranche and gate evidence live in
   `docs/oracle-v2-progress.md`. The source dependency, ownership, and G4

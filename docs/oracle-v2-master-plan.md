@@ -39,6 +39,18 @@ may adapt to repository evidence, but any change to product scope, gate
 ownership, retry authority, provider/model guarantees, or legacy retirement
 must be recorded as a plan delta before implementation.
 
+### 2026-09-25 bounded legacy compatibility delta
+
+The owner authorized one availability repair after ChatGPT replaced the
+shipped legacy route's model-picker trigger and power-slider attributes and
+every ordinary consultation began failing unsent during model or Pro effort
+selection. The repair may recognize the newly observed semantic Intelligence
+trigger, simple picker view, and accessible effort status, with focused
+regression coverage. It must not weaken model or effort proof or alter
+Send/retry authority, browser ownership, recovery, or the G3/G4 programme. This
+one bounded compatibility exception does not reopen the legacy lane for
+ordinary feature or symptom work.
+
 ## Product boundary
 
 The first canonical v2 lane is:

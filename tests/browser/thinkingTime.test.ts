@@ -2756,6 +2756,13 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     }
 
     private matchesSelector(selector: string): boolean {
+      const alternatives = selector
+        .split(",")
+        .map((candidate) => candidate.trim())
+        .filter(Boolean);
+      if (alternatives.length > 1) {
+        return alternatives.some((candidate) => this.matchesSelector(candidate));
+      }
       const role = this.attrs.role ?? "";
       const testid = this.attrs["data-testid"] ?? "";
       if (selector.includes('[role="menuitem"][aria-haspopup="menu"]')) {
@@ -2767,9 +2774,13 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
       if (selector.includes("composer-model-picker-slider-simple-view")) {
         return testid === "composer-model-picker-slider-simple-view";
       }
+      if (selector.includes('[data-model-picker-view="simple"]')) {
+        return this.attrs["data-model-picker-view"] === "simple";
+      }
       if (selector.includes("composer-intelligence-picker-content")) {
         return testid === "composer-intelligence-picker-content";
       }
+      if (selector.includes('[role="status"]')) return role === "status";
       if (selector.includes('[role="slider"]')) return role === "slider";
       if (selector.includes("[aria-valuenow]")) return this.attrs["aria-valuenow"] !== undefined;
       if (selector.includes('[aria-label="Power"]')) return this.attrs["aria-label"] === "Power";
@@ -2944,6 +2955,7 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     level: string,
     model: string | null = "gpt-5.6-sol",
     modelSelectionEvidence?: Parameters<typeof buildThinkingTimeExpressionForTest>[2],
+    transformExpression: (expression: string) => string = (expression) => expression,
   ) {
     let now = 0;
     const performanceStub = {
@@ -2952,6 +2964,9 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
         return now;
       },
     };
+    const expression = transformExpression(
+      buildThinkingTimeExpressionForTest(level as ThinkingTimeLevel, model, modelSelectionEvidence),
+    );
     const evaluate = new Function(
       "document",
       "performance",
@@ -2961,11 +2976,7 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
       "PointerEvent",
       "MouseEvent",
       "HTMLElement",
-      `return ${buildThinkingTimeExpressionForTest(
-        level as ThinkingTimeLevel,
-        model,
-        modelSelectionEvidence,
-      )};`,
+      `return ${expression};`,
     ) as (...args: unknown[]) => Promise<{ status: string; label: string | null }>;
     return evaluate(
       documentStub,
@@ -3003,6 +3014,10 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     finalPill = "Pro",
     pageLocale = "en-US",
     moveOnArrow = true,
+    currentSemanticMarkup = false,
+    initialAriaText,
+    finalAriaText = finalLabel,
+    menuInitiallyOpen = true,
   }: {
     initialNow?: string;
     minimum?: string;
@@ -3013,24 +3028,51 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     finalPill?: string;
     pageLocale?: string;
     moveOnArrow?: boolean;
+    currentSemanticMarkup?: boolean;
+    initialAriaText?: string;
+    finalAriaText?: string;
+    menuInitiallyOpen?: boolean;
   } = {}) {
-    const pill = new Node(initialPill, {
-      class: "__composer-pill",
-      "aria-expanded": "true",
-      "aria-haspopup": "menu",
-    });
-    const slider = new Node("", {
+    let menuOpen = menuInitiallyOpen;
+    const pill = new Node(
+      currentSemanticMarkup ? `Thinking effort${initialPill}` : initialPill,
+      currentSemanticMarkup
+        ? {
+            "data-codex-intelligence-trigger": "true",
+            "aria-label": "Select ChatGPT model",
+            "aria-expanded": menuOpen ? "true" : "false",
+            "aria-haspopup": "menu",
+          }
+        : {
+            class: "__composer-pill",
+            "aria-expanded": "true",
+            "aria-haspopup": "menu",
+          },
+      [],
+      (self) => {
+        menuOpen = true;
+        self.setAttribute("aria-expanded", "true");
+      },
+    );
+    const sliderAttrs: Record<string, string> = {
       role: "slider",
       "aria-valuenow": initialNow,
       "aria-valuemin": minimum,
       "aria-valuemax": maximum,
       tabindex: "-1",
-    });
+    };
+    if (initialAriaText !== undefined) sliderAttrs["aria-valuetext"] = initialAriaText;
+    const slider = new Node("", sliderAttrs);
     const power = new Node("", { role: "menuitem", "aria-label": "Power" }, [slider]);
+    const status = new Node(initialLabel, { role: "status" });
     const simpleView = new Node(
-      initialLabel,
-      { "data-testid": "composer-model-picker-slider-simple-view" },
-      [power],
+      currentSemanticMarkup
+        ? `6${initialLabel}Consumes usage limits fasterLatestGPT-5.6 SolGPT-5.5`
+        : initialLabel,
+      currentSemanticMarkup
+        ? { "data-model-picker-view": "simple" }
+        : { "data-testid": "composer-model-picker-slider-simple-view" },
+      currentSemanticMarkup ? [status, power] : [power],
     );
     power.onKeyDown = (_self, key) => {
       if (key !== "ArrowRight" || !moveOnArrow) return;
@@ -3041,6 +3083,8 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
       slider.setAttribute("aria-valuenow", String(next));
       if (next === max) {
         simpleView.textContent = finalLabel;
+        status.textContent = finalLabel;
+        if (initialAriaText !== undefined) slider.setAttribute("aria-valuetext", finalAriaText);
         pill.textContent = finalPill;
       }
     };
@@ -3069,23 +3113,188 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
       getElementById: () => null,
       querySelector: (selector: string) => {
         if (selector.includes("composer-intelligence-pro-thinking-effort-trigger")) return null;
-        if (selector.includes("composer-intelligence-picker-content")) return pickerContent;
-        if (selector.includes("composer-model-picker-slider-simple-view")) return simpleView;
-        if (selector.includes("composer-model-picker-slider-advanced-view")) return modelView;
-        if (selector.includes("__composer-pill")) return pill;
+        if (selector.includes("composer-intelligence-picker-content")) {
+          return menuOpen ? pickerContent : null;
+        }
+        if (
+          selector.includes("composer-model-picker-slider-simple-view") ||
+          selector.includes('data-model-picker-view="simple"')
+        ) {
+          return menuOpen && simpleView.matches(selector) ? simpleView : null;
+        }
+        if (selector.includes("composer-model-picker-slider-advanced-view")) {
+          return menuOpen ? modelView : null;
+        }
+        if (selector.includes("data-codex-intelligence-trigger")) return pill;
+        if (selector.includes("__composer-pill")) return currentSemanticMarkup ? null : pill;
         return null;
       },
       querySelectorAll: (selector: string) => {
-        if (selector.includes("composer-model-picker-slider-simple-view")) return [simpleView];
-        if (selector.includes("__composer-pill")) return [pill];
-        if (selector.includes('role="menu"') || selector.includes("data-radix")) return [topMenu];
-        if (selector.includes('role="menuitem"')) return [selectModel, power];
+        if (
+          selector.includes("composer-model-picker-slider-simple-view") ||
+          selector.includes('data-model-picker-view="simple"')
+        ) {
+          return menuOpen && simpleView.matches(selector) ? [simpleView] : [];
+        }
+        if (selector.includes("data-codex-intelligence-trigger")) return [pill];
+        if (selector.includes("__composer-pill")) return currentSemanticMarkup ? [] : [pill];
+        if (selector.includes('role="menu"') || selector.includes("data-radix")) {
+          return menuOpen ? [topMenu] : [];
+        }
+        if (selector.includes('role="menuitem"')) return menuOpen ? [selectModel, power] : [];
         return [];
       },
       dispatchEvent: () => true,
     };
-    return { documentStub, pill, power, slider, simpleView };
+    return { documentStub, pill, power, slider, simpleView, status };
   }
+
+  it("verifies Pro from the current semantic picker status", async () => {
+    const dom = buildSliderDom({
+      initialNow: "4",
+      initialLabel: "Pro, 5 of 5.",
+      initialPill: "Pro",
+      currentSemanticMarkup: true,
+    });
+    const documentStub = dom.documentStub as {
+      querySelectorAll: (selector: string) => Node[];
+    };
+
+    expect(
+      documentStub.querySelectorAll('[data-testid="composer-model-picker-slider-simple-view"]'),
+    ).toEqual([]);
+    expect(
+      documentStub.querySelectorAll(
+        '[data-model-picker-view="simple"], [data-testid="composer-model-picker-slider-simple-view"]',
+      ),
+    ).toEqual([dom.simpleView]);
+
+    await expect(
+      run(dom.documentStub, "pro", "gpt-5.6-sol", {
+        requestedModel: "GPT-5.6 Sol",
+        resolvedLabel: "GPT-5.6 Sol",
+        strategy: "select",
+        status: "switched",
+        verified: true,
+        source: "chatgpt-model-picker",
+        capturedAt: "2026-09-25T00:00:00.000Z",
+      }),
+    ).resolves.toEqual({ status: "already-selected", label: "Pro" });
+    expect(dom.power.keydowns).toEqual([]);
+  });
+
+  it("requires the current simple-view selector when the legacy marker is absent", async () => {
+    const dom = buildSliderDom({
+      initialNow: "4",
+      initialLabel: "Pro, 5 of 5.",
+      initialPill: "Pro",
+      currentSemanticMarkup: true,
+    });
+    let mutationApplied = false;
+
+    await expect(
+      run(
+        dom.documentStub,
+        "pro",
+        "gpt-5.6-sol",
+        {
+          requestedModel: "GPT-5.6 Sol",
+          resolvedLabel: "GPT-5.6 Sol",
+          strategy: "select",
+          status: "switched",
+          verified: true,
+          source: "chatgpt-model-picker",
+          capturedAt: "2026-09-25T00:00:00.000Z",
+        },
+        (expression) => {
+          const mutated = expression.replace(
+            `'[data-model-picker-view="simple"], [data-testid="composer-model-picker-slider-simple-view"]'`,
+            `'[data-testid="composer-model-picker-slider-simple-view"]'`,
+          );
+          mutationApplied = mutated !== expression;
+          return mutated;
+        },
+      ),
+    ).resolves.toMatchObject({ status: "option-not-found" });
+    expect(mutationApplied).toBe(true);
+  });
+
+  it("selects Pro from a closed current semantic picker", async () => {
+    const dom = buildSliderDom({
+      initialNow: "3",
+      initialLabel: "Extra High, 4 of 5",
+      initialPill: "Extra High",
+      initialAriaText: "Extra High, 4 of 5",
+      currentSemanticMarkup: true,
+      menuInitiallyOpen: false,
+    });
+
+    await expect(
+      run(dom.documentStub, "pro", "gpt-5.6-sol", {
+        requestedModel: "GPT-5.6 Sol",
+        resolvedLabel: "GPT-5.6 Sol",
+        strategy: "select",
+        status: "switched",
+        verified: true,
+        source: "chatgpt-model-picker",
+        capturedAt: "2026-09-25T00:00:00.000Z",
+      }),
+    ).resolves.toEqual({ status: "switched", label: "Pro" });
+    expect(dom.pill.clicks).toBeGreaterThan(0);
+    expect(dom.power.keydowns).toEqual(["ArrowRight"]);
+    expect(dom.slider.getAttribute("aria-valuenow")).toBe("4");
+  });
+
+  it("fails closed when the current semantic picker ignores ArrowRight", async () => {
+    const dom = buildSliderDom({
+      initialNow: "3",
+      initialLabel: "Extra High, 4 of 5",
+      initialPill: "Extra High",
+      initialAriaText: "Extra High, 4 of 5",
+      currentSemanticMarkup: true,
+      menuInitiallyOpen: false,
+      moveOnArrow: false,
+    });
+
+    await expect(
+      run(dom.documentStub, "pro", "gpt-5.6-sol", {
+        requestedModel: "GPT-5.6 Sol",
+        resolvedLabel: "GPT-5.6 Sol",
+        strategy: "select",
+        status: "switched",
+        verified: true,
+        source: "chatgpt-model-picker",
+        capturedAt: "2026-09-25T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({ status: "selection-unverified" });
+    expect(dom.power.keydowns).toEqual(["ArrowRight"]);
+  });
+
+  it("fails closed when current picker status conflicts with slider value text", async () => {
+    const dom = buildSliderDom({
+      initialNow: "4",
+      initialLabel: "Pro, 5 of 5.",
+      initialPill: "Pro",
+      initialAriaText: "Extra High, 4 of 5",
+      currentSemanticMarkup: true,
+    });
+
+    const result = await run(dom.documentStub, "pro", "gpt-5.6-sol", {
+      requestedModel: "GPT-5.6 Sol",
+      resolvedLabel: "GPT-5.6 Sol",
+      strategy: "select",
+      status: "switched",
+      verified: true,
+      source: "chatgpt-model-picker",
+      capturedAt: "2026-09-25T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      status: "selection-unverified",
+      diagnostic: { pickerShape: "five-position-power-slider" },
+    });
+    expect(dom.power.keydowns).toEqual([]);
+  });
 
   it("selects Pro from the current slider-only 4-of-5 picker", async () => {
     let selectedIndex = 4;
