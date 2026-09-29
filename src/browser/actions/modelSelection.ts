@@ -371,7 +371,14 @@ export function buildModelSelectionExpression(
       } catch {}
     };
 
-    const getButtonLabel = () => (findModelButton()?.textContent ?? '').trim();
+    // The current semantic trigger keeps aria-hidden measurement text in textContent
+    // (for example, "Thinking effortMedium") while innerText exposes only the label
+    // a user can see. Prefer that visible label so hidden sizing text cannot become
+    // model-selection evidence.
+    const getButtonLabel = () => {
+      const button = findModelButton();
+      return (button?.innerText ?? button?.textContent ?? '').trim();
+    };
     const getComposerModelLabel = () =>
       (document.querySelector(COMPOSER_MODEL_SIGNAL_SELECTOR)?.textContent ?? '').trim();
     const readComposerModelSignal = () => normalizeText(getComposerModelLabel());
@@ -500,11 +507,17 @@ export function buildModelSelectionExpression(
     const isSubmenuOpener = (node) =>
       node?.getAttribute?.('role') === 'menuitem' &&
       node?.getAttribute?.('aria-haspopup') === 'menu';
+    const isCurrentSemanticPickerMenu = (menu) =>
+      Boolean(
+        menu?.querySelector?.('[data-model-picker-view]') &&
+          menu?.getAttribute?.('aria-labelledby') === findModelButton()?.id,
+      );
     const isUnifiedPickerMenu = (menu) =>
       Boolean(
         menu?.getAttribute?.('data-testid') === 'composer-intelligence-picker-content' ||
           menu?.querySelector?.(INTELLIGENCE_PICKER_SELECTOR) ||
-          menu?.querySelector?.(ADVANCED_VIEW_SELECTOR),
+          menu?.querySelector?.(ADVANCED_VIEW_SELECTOR) ||
+          isCurrentSemanticPickerMenu(menu),
       );
     const findUnifiedPickerMenu = () =>
       Array.from(document.querySelectorAll(${menuContainerLiteral})).find(isUnifiedPickerMenu) ??
@@ -1083,7 +1096,10 @@ export function buildModelSelectionExpression(
     };
 
     const hasModelSwitcherItem = (node) =>
-      Boolean(node?.querySelector?.('[data-testid^="model-switcher-"]'));
+      Boolean(
+        node?.querySelector?.('[data-testid^="model-switcher-"]') ||
+          isCurrentSemanticPickerMenu(node),
+      );
     const hasModelLikeMenuText = (node) => {
       const text = normalizeText(node?.textContent ?? '');
       return (
@@ -1098,7 +1114,11 @@ export function buildModelSelectionExpression(
       );
     };
     const queryPickerMenus = () => {
-      const menus = Array.from(document.querySelectorAll(${menuContainerLiteral}));
+      // Radix keeps closed measurement menus mounted. They are useful neither as
+      // click targets nor as proof that the picker is open; counting them here
+      // prevents ensureMenuOpen() from reopening the real menu after a selection.
+      const menus = Array.from(document.querySelectorAll(${menuContainerLiteral}))
+        .filter(isVisibleElement);
       const pickerMenus = menus.filter(hasModelSwitcherItem);
       if (pickerMenus.length === 0) return menus;
       const textFallbackMenus = menus.filter(
@@ -1273,6 +1293,7 @@ export function buildModelSelectionExpression(
         const menuRoots = queryPickerMenus();
         const nodes = menuRoots.flatMap((root) => Array.from(root.querySelectorAll(${menuItemLiteral})));
         const labels = nodes
+          .filter(isVisibleElement)
           .map((node) => (node?.textContent ?? '').trim())
           .filter(Boolean)
           .filter((label, index, arr) => arr.indexOf(label) === index);

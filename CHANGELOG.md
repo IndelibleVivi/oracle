@@ -47,7 +47,11 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   (`data-model-picker-view="simple"`), and accessible effort status when the
   composer no longer exposes the older picker markers. Strict model and Pro
   effort proof remains fail-closed, including when scoped status and slider
-  value signals disagree, and picker failures still abort before Send.
+  value signals disagree, and picker failures still abort before Send. Closed
+  Radix measurement menus no longer count as an open picker or advertise
+  hidden choices: Oracle reopens the visible menu after a selection and
+  verifies the checked row instead of timing out while naming the requested
+  model as merely available.
 - MCP `consult` now marks a long final log as a preview and returns its full
   byte length and read-only session-log resource URI, so callers can retrieve
   the complete stored log instead of silently treating the last 4,000 characters

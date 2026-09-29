@@ -7,7 +7,7 @@ read_when:
 
 # Oracle v2 progress
 
-Updated: 2026-09-15
+Updated: 2026-09-30
 
 Source integration record: `fork/main@efae6f94714df2f63a2c3afbed817def42421f23`
 is the verified PR #9 merge and owner-accepted T0 baseline. PR #8 at
@@ -34,6 +34,20 @@ admitted repair is limited to recognizing the newly observed semantic
 Intelligence trigger, simple picker view, and accessible effort status, plus
 focused regression coverage; it does not weaken model/effort proof or change
 dispatch, recovery, browser ownership, or the G3/G4 gate.
+
+On 2026-09-30, a no-Send follow-up probe confirmed that the same semantic
+picker can retain a closed Radix measurement menu after a model click while
+the trigger's `textContent` still contains hidden sizing text. The bounded
+compatibility path now ignores non-visible mounted menus, scopes the current
+simple view to its `aria-labelledby` trigger, reads the visible trigger label,
+and reopens the real menu to verify its checked model row. A regression fixture
+reproduces the prior pre-Send failure where `GPT-5.6 Sol` appeared in the
+available-options diagnostic but could not be confirmed. The locally linked
+installed CLI was rebuilt from this source and passed a bounded empty-composer
+acceptance that switched `Latest` to `GPT-5.6 Sol`, verified the already-selected
+state on a second pass, recorded `promptSubmitted:false`, and drained the exact
+Chrome for Testing process. No dispatch, recovery, ownership, or G3/G4 behavior
+changed.
 
 T0 froze and the owner accepted the disposable-attempt plan against current
 source. The existing v2

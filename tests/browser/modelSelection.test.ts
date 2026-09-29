@@ -212,6 +212,238 @@ const evaluateMenuModelSelectionExpression = async (
   );
 };
 
+const evaluateCurrentSimplePickerExpression = async (): Promise<{
+  result: unknown;
+  selectedModel: "Latest" | "GPT-5.6 Sol";
+  triggerClicks: number;
+}> => {
+  class FakeEventTarget {
+    dispatchEvent(_event: unknown): boolean {
+      return true;
+    }
+  }
+
+  class FakeMouseEvent {
+    constructor(
+      readonly type: string,
+      readonly init?: unknown,
+    ) {}
+  }
+
+  let menuOpen = false;
+  let menuMounted = false;
+  let selectedModel: "Latest" | "GPT-5.6 Sol" = "Latest";
+  let triggerClicks = 0;
+
+  class FakeElement extends FakeEventTarget {
+    constructor(
+      public textContent: string,
+      private readonly attributes: Record<string, string> = {},
+      private readonly children: readonly FakeElement[] = [],
+      private readonly visible: () => boolean = () => true,
+      private readonly onClick?: () => void,
+      private readonly visibleText?: () => string,
+    ) {
+      super();
+    }
+
+    get id(): string {
+      return this.attributes.id ?? "";
+    }
+
+    get innerText(): string {
+      return this.visibleText?.() ?? this.textContent;
+    }
+
+    getAttribute(name: string): string | null {
+      return this.attributes[name] ?? null;
+    }
+
+    setAttribute(name: string, value: string): void {
+      this.attributes[name] = value;
+    }
+
+    private descendants(): FakeElement[] {
+      return this.children.flatMap((child) => [child, ...child.descendants()]);
+    }
+
+    private matchesSelector(selector: string): boolean {
+      const role = this.attributes.role ?? "";
+      if (selector.includes("data-model-picker-view")) {
+        return Boolean(this.attributes["data-model-picker-view"]);
+      }
+      if (selector.includes('role="menuitemradio"') && role === "menuitemradio") return true;
+      if (selector.includes('role="menuitem"') && role === "menuitem") return true;
+      if (selector.includes('role="menu"') && role === "menu") return true;
+      if (selector.includes("button") && this.attributes.tag === "button") return true;
+      return false;
+    }
+
+    querySelector(selector: string): FakeElement | null {
+      return this.descendants().find((node) => node.matchesSelector(selector)) ?? null;
+    }
+
+    querySelectorAll(selector: string): FakeElement[] {
+      return this.descendants().filter((node) => node.matchesSelector(selector));
+    }
+
+    closest(_selector: string): FakeElement | null {
+      return null;
+    }
+
+    matches(selector: string): boolean {
+      return this.matchesSelector(selector);
+    }
+
+    contains(node: unknown): boolean {
+      return this.descendants().includes(node as FakeElement);
+    }
+
+    getBoundingClientRect(): { x: number; y: number; width: number; height: number } {
+      return this.visible()
+        ? { x: 10, y: 10, width: 120, height: 36 }
+        : { x: 0, y: 0, width: 0, height: 0 };
+    }
+
+    focus(): void {}
+
+    override dispatchEvent(event: unknown): boolean {
+      if ((event as { type?: string }).type === "click") this.onClick?.();
+      return super.dispatchEvent(event);
+    }
+  }
+
+  let latestRow: FakeElement;
+  let solRow: FakeElement;
+  latestRow = new FakeElement(
+    "Latest",
+    { role: "menuitemradio", "aria-checked": "true" },
+    [],
+    () => menuOpen,
+    () => {
+      selectedModel = "Latest";
+      latestRow.setAttribute("aria-checked", "true");
+      solRow.setAttribute("aria-checked", "false");
+      menuOpen = false;
+    },
+  );
+  solRow = new FakeElement(
+    "GPT-5.6 Sol",
+    { role: "menuitemradio", "aria-checked": "false" },
+    [],
+    () => menuOpen,
+    () => {
+      selectedModel = "GPT-5.6 Sol";
+      latestRow.setAttribute("aria-checked", "false");
+      solRow.setAttribute("aria-checked", "true");
+      menuOpen = false;
+    },
+  );
+  const modelView = new FakeElement(
+    "MediumLatestGPT-5.6 SolGPT-5.5Leaving on October 14",
+    { "data-model-picker-view": "simple" },
+    [
+      new FakeElement("Medium", { role: "menuitem" }, [], () => menuOpen),
+      latestRow,
+      solRow,
+      new FakeElement(
+        "GPT-5.5Leaving on October 14",
+        { role: "menuitemradio", "aria-checked": "false" },
+        [],
+        () => menuOpen,
+      ),
+    ],
+    () => menuOpen,
+  );
+  const menu = new FakeElement(
+    "MediumLatestGPT-5.6 SolGPT-5.5Leaving on October 14",
+    { role: "menu", "aria-labelledby": "semantic-model-trigger" },
+    [modelView],
+    () => menuOpen,
+  );
+  const modelButton = new FakeElement(
+    "Thinking effortMedium",
+    {
+      id: "semantic-model-trigger",
+      tag: "button",
+      "aria-label": "Select ChatGPT model",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      "data-codex-intelligence-trigger": "true",
+    },
+    [],
+    () => true,
+    () => {
+      triggerClicks += 1;
+      menuMounted = true;
+      menuOpen = !menuOpen;
+      modelButton.setAttribute("aria-expanded", menuOpen ? "true" : "false");
+      modelButton.textContent = menuOpen
+        ? "Thinking effortThinking effort"
+        : selectedModel === "Latest"
+          ? "Thinking effortMedium"
+          : "Thinking effort5.6 Medium";
+    },
+    () => (menuOpen ? "Thinking effort" : selectedModel === "Latest" ? "Medium" : "5.6 Medium"),
+  );
+
+  const documentStub = {
+    title: "",
+    body: { innerText: "" },
+    querySelector: (selector: string) => {
+      if (selector.includes('data-codex-intelligence-trigger="true"')) return modelButton;
+      if (selector.includes("model-switcher-dropdown-button")) return null;
+      if (selector.includes("button.__composer-pill")) return null;
+      return null;
+    },
+    querySelectorAll: (selector: string) => {
+      if (selector.includes("button.__composer-pill") || selector.includes("button[aria-label]")) {
+        return [modelButton];
+      }
+      if (selector.includes('role="menu"') || selector.includes("data-radix")) {
+        return menuMounted ? [menu] : [];
+      }
+      return [];
+    },
+    dispatchEvent: () => true,
+  };
+  const windowStub = {
+    location: { href: "https://chatgpt.com/" },
+    getComputedStyle: (node: FakeElement) => ({
+      display: node.getBoundingClientRect().width > 0 ? "block" : "none",
+      visibility: "visible",
+    }),
+  };
+  let now = 0;
+  const performanceStub = { now: () => (now += 100) };
+  const immediateSetTimeout = (handler: TimerHandler): number => {
+    if (typeof handler === "function") handler();
+    return 0;
+  };
+  const expression = buildModelSelectionExpressionForTest("GPT-5.6 Sol");
+  const evaluate = new Function(
+    "document",
+    "performance",
+    "setTimeout",
+    "window",
+    "EventTarget",
+    "MouseEvent",
+    "HTMLElement",
+    `return ${expression};`,
+  ) as (...args: unknown[]) => Promise<unknown>;
+
+  const result = await evaluate(
+    documentStub,
+    performanceStub,
+    immediateSetTimeout,
+    windowStub,
+    FakeEventTarget,
+    FakeMouseEvent,
+    FakeElement,
+  );
+  return { result, selectedModel, triggerClicks };
+};
+
 const evaluateIntelligenceModelSelectionExpression = async (
   targetModel: string,
   initialButtonLabel = "Extra High",
@@ -1829,6 +2061,13 @@ describe("browser model selection matchers", () => {
     expect(harness.result).toEqual({ status: "switched", label: "GPT-5.5" });
     expect(harness.selectedModel).toBe("GPT-5.5");
     expect(harness.clicks.advanced).toBeGreaterThan(0);
+  });
+
+  it("reopens the current simple picker after selection closes over a hidden mounted menu", async () => {
+    const harness = await evaluateCurrentSimplePickerExpression();
+    expect(harness.result).toEqual({ status: "switched", label: "GPT-5.6 Sol" });
+    expect(harness.selectedModel).toBe("GPT-5.6 Sol");
+    expect(harness.triggerClicks).toBeGreaterThanOrEqual(3);
   });
 
   it("selects GPT-5.5 through the collapsed Advanced -> Model submenu", async () => {
